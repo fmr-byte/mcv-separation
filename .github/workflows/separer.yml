@@ -1,5 +1,5 @@
-# Isole la voix d'un spot couvert par la musique (Demucs), remet le volume à niveau (ffmpeg loudnorm)
-# et renvoie la voix au bot MCV VEILLE, qui la transcrit et la classe.
+# Isole la voix d'un spot couvert par la musique et la renvoie au bot MCV VEILLE, qui la transcrit et la classe.
+# Plusieurs essais, du plus rapide au plus lent ; on s'arrête au premier que Whisper comprend.
 # Dépôt public : les journaux ne doivent contenir ni transcription, ni marque, ni adresse.
 name: separer
 
@@ -9,6 +9,10 @@ on:
       envoi:
         description: "Numéro de l'envoi dans la base du bot"
         required: true
+      silencieux:
+        description: "1 = test : le bot ne répond pas dans le groupe"
+        required: false
+        default: "0"
 
 concurrency:
   group: separer-${{ inputs.envoi }}
@@ -16,11 +20,12 @@ concurrency:
 jobs:
   separer:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       WORKER_URL: ${{ secrets.WORKER_URL }}
       SEPARATION_SECRET: ${{ secrets.SEPARATION_SECRET }}
       ENVOI: ${{ inputs.envoi }}
+      SILENCIEUX: ${{ inputs.silencieux }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,34 +35,21 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Modèle Demucs en cache
+      - name: Modèles Demucs en cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/torch
-          key: demucs-htdemucs-v1
+          key: demucs-modeles-v2
 
       - name: Installation
         run: |
           command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null)
           pip install -q -r requirements.txt
 
-      - name: Séparation et remise à niveau
-        run: |
-          set -euo pipefail
-          curl -sf -H "X-Cle: $SEPARATION_SECRET" "$WORKER_URL/separation/media?id=$ENVOI" -o entree.bin
-          # Même préparation que l'essai réussi du 2026-11-08 : son mono 16 kHz en MP3, puis Demucs.
-          ffmpeg -v error -y -i entree.bin -vn -ac 1 -ar 16000 -b:a 64k entree.mp3
-          python -m demucs --two-stems=vocals -n htdemucs -o sortie entree.mp3 > /dev/null 2>&1
-          ffmpeg -v error -y -i sortie/htdemucs/entree/vocals.wav -af loudnorm -ar 16000 -ac 1 -sample_fmt s16 voix.wav
-          echo "Voix isolée : $(stat -c %s voix.wav) octets"
-
-      - name: Retour au bot
-        run: |
-          curl -sf -X POST -H "X-Cle: $SEPARATION_SECRET" -H "content-type: audio/wav" \
-            --data-binary @voix.wav "$WORKER_URL/separation/resultat?id=$ENVOI" > /dev/null
-          echo "Voix renvoyée au bot"
+      - name: Séparation (plusieurs essais)
+        run: bash separer.sh
 
       - name: Échec signalé au bot
         if: failure()
         run: |
-          curl -s -X POST -H "X-Cle: $SEPARATION_SECRET" "$WORKER_URL/separation/echec?id=$ENVOI" > /dev/null || true
+          curl -s -X POST -H "X-Cle: $SEPARATION_SECRET" "$WORKER_URL/separation/echec?id=$ENVOI&silencieux=$SILENCIEUX" > /dev/null || true
