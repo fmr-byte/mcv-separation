@@ -45,8 +45,9 @@ jobs:
         run: |
           set -euo pipefail
           curl -sf -H "X-Cle: $SEPARATION_SECRET" "$WORKER_URL/separation/media?id=$ENVOI" -o entree.bin
-          ffmpeg -v error -y -i entree.bin -vn -ac 2 -ar 44100 entree.wav
-          python -m demucs --two-stems=vocals -n htdemucs -o sortie entree.wav > /dev/null 2>&1
+          # Même préparation que l'essai réussi du 2026-11-08 : son mono 16 kHz en MP3, puis Demucs.
+          ffmpeg -v error -y -i entree.bin -vn -ac 1 -ar 16000 -b:a 64k entree.mp3
+          python -m demucs --two-stems=vocals -n htdemucs -o sortie entree.mp3 > /dev/null 2>&1
           ffmpeg -v error -y -i sortie/htdemucs/entree/vocals.wav -af loudnorm -ar 16000 -ac 1 -sample_fmt s16 voix.wav
           echo "Voix isolée : $(stat -c %s voix.wav) octets"
 
